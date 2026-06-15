@@ -2398,6 +2398,13 @@ class GPUModelRunner(
         # Prepare the attention metadata for each KV cache group and make layers
         # in the same group share the same metadata.
         spec_decode_common_attn_metadata = None
+        dflash_drafter = (
+            self.drafter
+            if self.speculative_config and isinstance(self.drafter, DFlashProposer)
+            else None
+        )
+        if dflash_drafter is not None:
+            dflash_drafter.clear_draft_block_tables()
         for kv_cache_gid, kv_cache_group in enumerate(kv_cache_groups):
             cm = copy(cm_base)  # shallow copy
 
@@ -2430,6 +2437,10 @@ class GPUModelRunner(
             # Capture per-group block tables for multi-group proposers.
             if self.speculative_config and isinstance(self.drafter, Gemma4Proposer):
                 self.drafter.set_per_group_block_table(
+                    kv_cache_gid, cm.block_table_tensor
+                )
+            if dflash_drafter is not None:
+                dflash_drafter.set_draft_block_table(
                     kv_cache_gid, cm.block_table_tensor
                 )
 

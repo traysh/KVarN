@@ -87,20 +87,30 @@ def update_dflash(config_dict: dict, pre_trained_config: dict) -> None:
         placeholders
     - aux_hidden_state_layer_ids (required): Layer indices from the target
         model whose intermediate hidden states are used as context for the
-        DFlash drafter. Mapped to both eagle_aux_hidden_state_layer_ids
-        (for gpu_model_runner) and dflash_config.target_layer_ids (for the
-        DFlash model).
+        DFlash drafter. Mapped to dflash_config.target_layer_ids for the
+        DFlash model; runner-facing eagle_aux_hidden_state_layer_ids are
+        shifted by one to match its indexing semantics.
     """
     pre_trained_config["architectures"] = ["DFlashDraftModel"]
     pre_trained_config["draft_vocab_size"] = config_dict.get("draft_vocab_size")
     if config_dict.get("target_hidden_size") is not None:
         pre_trained_config["target_hidden_size"] = config_dict["target_hidden_size"]
+    for key in (
+        "layer_types",
+        "use_sliding_window",
+        "sliding_window",
+        "max_window_layers",
+    ):
+        if key in config_dict:
+            pre_trained_config[key] = config_dict[key]
 
     aux_layer_ids = config_dict["aux_hidden_state_layer_ids"]
-    pre_trained_config["eagle_aux_hidden_state_layer_ids"] = aux_layer_ids
+    pre_trained_config["eagle_aux_hidden_state_layer_ids"] = [
+        i + 1 for i in aux_layer_ids
+    ]
 
-    # DFlash configs use different indexing for the target layers, see #40727
+    # DFlash configs use different indexing for the target layers, see #40727.
     pre_trained_config["dflash_config"] = {
         "mask_token_id": config_dict["mask_token_id"],
-        "target_layer_ids": [i - 1 for i in aux_layer_ids],
+        "target_layer_ids": aux_layer_ids,
     }
