@@ -91,7 +91,6 @@ class DFlashAttention(Attention):
                 head_size_v=getattr(spec, "head_size_v", spec.head_size),
                 dtype=spec.dtype,
                 kv_quant_mode=spec.kv_quant_mode,
-                page_size_padded=spec.page_size_padded,
                 tq_slot_size=spec.tq_slot_size,
             )
         if isinstance(spec, SlidingWindowSpec):
@@ -102,7 +101,6 @@ class DFlashAttention(Attention):
                 head_size_v=getattr(spec, "head_size_v", spec.head_size),
                 dtype=spec.dtype,
                 kv_quant_mode=spec.kv_quant_mode,
-                page_size_padded=spec.page_size_padded,
             )
         return spec
 
