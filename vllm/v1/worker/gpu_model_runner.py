@@ -6982,13 +6982,36 @@ class GPUModelRunner(
                         # a K/V dimension of size 2.
                         dtype_size = get_dtype_size(dtype)
                         page_stride = kv_cache_spec.page_size_bytes // dtype_size
+                        if num_blocks_per_kv_block > 1:
+                            # The logical shape is expanded to kernel-level
+                            # blocks, so the stride along the block dimension
+                            # must also be expressed per kernel block rather
+                            # than per padded scheduler block.
+                            page_stride //= num_blocks_per_kv_block
                         strides = list(torch.empty(kv_cache_shape).stride())
                         strides[inv_order[0]] = page_stride
-                        kv_cache = torch.as_strided(
-                            raw_tensor,
-                            size=kv_cache_shape,
-                            stride=tuple(strides),
-                        )
+                        try:
+                            kv_cache = torch.as_strided(
+                                raw_tensor,
+                                size=kv_cache_shape,
+                                stride=tuple(strides),
+                            )
+                        except RuntimeError as e:
+                            raise RuntimeError(
+                                "Failed to reshape padded attention KV cache "
+                                f"for {layer_name}: "
+                                f"spec_type={type(kv_cache_spec).__name__} "
+                                f"raw_numel={raw_tensor.numel()} "
+                                f"page_size_bytes={kv_cache_spec.page_size_bytes} "
+                                f"block_size={kv_cache_spec.block_size} "
+                                f"kernel_block_size={kernel_block_size} "
+                                f"kernel_num_blocks={kernel_num_blocks} "
+                                f"shape_block_size={shape_block_size} "
+                                f"kv_cache_shape={kv_cache_shape} "
+                                f"stride_order={kv_cache_stride_order} "
+                                f"inv_order={inv_order} "
+                                f"page_size_padded={kv_cache_spec.page_size_padded}"
+                            ) from e
                     else:
                         # No padding — safe to use a contiguous view.
                         kv_cache = raw_tensor.view(kv_cache_shape)
@@ -7008,12 +7031,23 @@ class GPUModelRunner(
                         stride = torch.empty(target_shape).stride()
                         target_stride = (num_element_per_page, *stride[1:])
                         assert storage_offset_bytes % dtype_size == 0
-                        tensor = torch.as_strided(
-                            raw_tensor.view(dtype),
-                            size=target_shape,
-                            stride=target_stride,
-                            storage_offset=storage_offset_bytes // dtype_size,
-                        )
+                        try:
+                            tensor = torch.as_strided(
+                                raw_tensor.view(dtype),
+                                size=target_shape,
+                                stride=target_stride,
+                                storage_offset=storage_offset_bytes // dtype_size,
+                            )
+                        except RuntimeError as e:
+                            raise RuntimeError(
+                                "Failed to reshape Mamba KV cache "
+                                f"for {layer_name}: shapes={kv_cache_spec.shapes} "
+                                f"dtypes={kv_cache_spec.dtypes} raw_numel={raw_tensor.numel()} "
+                                f"page_size_bytes={kv_cache_spec.page_size_bytes} "
+                                f"block_size={kv_cache_spec.block_size} "
+                                f"target_shape={target_shape} target_stride={target_stride} "
+                                f"storage_offset_bytes={storage_offset_bytes}"
+                            ) from e
                         state_tensors.append(tensor)
                         storage_offset_bytes += stride[0] * dtype_size
 

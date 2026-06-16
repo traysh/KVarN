@@ -1036,26 +1036,47 @@ def unify_kv_cache_spec_page_size(
             new_kv_cache_spec[layer_name] = layer_spec
         else:
             layer_page_size = layer_spec.page_size_bytes
+            # KVarN/TQ specs are group-locked: their block_size must equal the
+            # variance-normalization tile size (group=128), so we cannot scale
+            # block_size to grow the page. MambaSpec similarly ignores
+            # block_size for its physical page size, so both kinds must be
+            # aligned by padding the page directly.
+            if getattr(layer_spec, "tq_slot_size", 0) > 0 or isinstance(
+                layer_spec, MambaSpec
+            ):
+                new_spec = replace(layer_spec, page_size_padded=max_page_size)
+                if new_spec.page_size_bytes != max_page_size:
+                    raise AssertionError(
+                        "Failed to unify KV cache page size for layer "
+                        f"{layer_name}: {type(layer_spec).__name__=} "
+                        f"{layer_page_size=} {max_page_size=} "
+                        f"new_type={type(new_spec).__name__} "
+                        f"new_page_size={new_spec.page_size_bytes} "
+                        f"block_size={getattr(new_spec, 'block_size', None)} "
+                        f"page_size_padded={getattr(new_spec, 'page_size_padded', None)} "
+                        f"tq_slot_size={getattr(new_spec, 'tq_slot_size', None)}"
+                    )
+                new_kv_cache_spec[layer_name] = new_spec
+                continue
             if max_page_size % layer_page_size != 0:
                 raise NotImplementedError(
                     "The page size of the layer is not divisible by the "
                     "maximum page size. Cannot unify by adjusting block_size."
                 )
             ratio = max_page_size // layer_page_size
-            # KVarN/TQ specs are group-locked: their block_size must equal the
-            # variance-normalization tile size (group=128), so we cannot scale
-            # block_size to grow the page. Instead pad the page via
-            # page_size_padded (the reshape uses a strided view, like MLA), which
-            # keeps block_size fixed. Only safe because the KVarN/TQ kv_cache
-            # shape starts with num_blocks. (Costs the smaller-page layers some
-            # wasted bytes per block, but avoids breaking the group=block_size
-            # invariant the KVarN kernels rely on.)
-            if getattr(layer_spec, "tq_slot_size", 0) > 0:
-                new_spec = replace(layer_spec, page_size_padded=max_page_size)
-            else:
-                new_block_size = layer_spec.block_size * ratio
-                new_spec = replace(layer_spec, block_size=new_block_size)
-            assert new_spec.page_size_bytes == max_page_size
+            new_block_size = layer_spec.block_size * ratio
+            new_spec = replace(layer_spec, block_size=new_block_size)
+            if new_spec.page_size_bytes != max_page_size:
+                raise AssertionError(
+                    "Failed to unify KV cache page size for layer "
+                    f"{layer_name}: {type(layer_spec).__name__=} "
+                    f"{layer_page_size=} {max_page_size=} {ratio=} "
+                    f"new_type={type(new_spec).__name__} "
+                    f"new_page_size={new_spec.page_size_bytes} "
+                    f"block_size={getattr(new_spec, 'block_size', None)} "
+                    f"page_size_padded={getattr(new_spec, 'page_size_padded', None)} "
+                    f"tq_slot_size={getattr(new_spec, 'tq_slot_size', None)}"
+                )
             new_kv_cache_spec[layer_name] = new_spec
     return new_kv_cache_spec
 
